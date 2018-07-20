@@ -1,7 +1,6 @@
 ---
 - name: Create the servers specified in group_vars
   hosts: all
-  become: yes
 
   roles:
     - blacklistmod
