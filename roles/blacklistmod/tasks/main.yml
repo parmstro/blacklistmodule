@@ -1,0 +1,93 @@
+---
+
+# echo "blacklist floppy" >> /etc/modprobe.d/local-blacklist.conf           
+#
+- name: Blacklist the module "{{ module_name }}"
+  lineinfile:
+    path: /etc/modprobe.d/local-blacklist.conf
+    create: yes
+    line: "blacklist {{ module_name }}"
+
+# echo "install floppy /bin/false" >> /etc/modprobe.d/local-blacklist.conf  
+#
+- name: Prevent module installation of module "{{ module_name }}"
+  lineinfile:
+    path: /etc/modprobe.d/local-blacklist.conf
+    line: "install {{ module_name }} /bin/false"
+
+# cp /boot/initramfs-$(uname -r).img /boot/initramfs-$(uname -r).img.$(date +%m-%d-%H%M%S).bak
+#
+- name: Get the kernel version to identify the initramfs file
+  command: uname -r
+  register: kernel_ver
+
+- name: Backup the initramfs img file
+  copy:
+    src: "/boot/initramfs-{{ kernel_ver.stdout }}.img"
+    dest: "/boot/initramfs-{{ kernel_ver.stdout }}.img.{{ ansible_date_time.date }}.bak"
+    remote_src: yes
+
+# dracut --omit-drivers floppy -f
+#
+- name: Configure dracut
+  command: "dracut --omit-drivers {{ module_name }} -f"
+
+# sed -i '/^GRUB_CMDLINE_LINUX=/s/"$/ floppy.blacklist=1 rd.driver.blacklist=floppy"/' /etc/sysconfig/grub   
+#
+- name: Update the grub boot loader configuration
+  lineinfile: 
+     dest: /etc/sysconfig/grub
+     backup: True
+     backrefs: True
+     state: present
+     regexp: '^(GRUB_CMDLINE_LINUX=)$'
+     line: '\1 {{ module_name }}.blacklist=1 rd.driver.blacklist={{ module_name }}'
+
+# grub2-mkconfig -o /boot/grub2/grub.cfg
+#
+- name: Rebuild the grub configuration
+  command: grub2-mkconfig -o /boot/grub2/grub.cfg
+
+# cp /boot/initramfs-$(uname -r)kdump.img /boot/initramfs-$(uname -r)kdump.img.$(date +%m-%d-%H%M%S).bak
+#
+- name: Backup the initramfs kdump image
+  copy:
+    src: "/boot/initramfs-{{ kernel_ver.stdout }}kdump.img"
+    dest: "/boot/initramfs-{{ kernel_ver.stdout }}kdump.img.{{ ansible_date_time.date }}.bak"
+    remote_src: yes
+
+# sed -i '/^KDUMP_COMMANDLINE_APPEND=/s/"$/ rd.driver.blacklist=floppy"/' /etc/sysconfig/kdump                    
+#
+- name: Update the kdump configuration
+  lineinfile:
+     dest: /etc/sysconfig/kdump
+     backup: True
+     backrefs: True
+     state: present
+     regexp: '^(KDUMP_COMMANDLINE_APPEND=)$'
+     line: '\1 rd.driver.blacklist={{ module_name }}'
+
+# kdumpctl restart
+#
+- name: Restart kdumpctl
+  command: kdumpctl restart
+ 
+# mkdumprd -f /boot/initramfs-$(uname -r)kdump.img
+#
+- name: Recreate the kdump image
+  command: "mkdumprd -f /boot/initramfs-{{ kernel_ver.stdout }}kdump.img"
+
+- name: restart the system
+  command: shutdown -r
+  
+- name: Wait 1h for systems to come up on port 22 and contain "OpenSSH" - checking every 60s
+  wait_for:
+    timeout: 3600
+    sleep: 60
+    port: 22
+    host: "{{ ansible_nodename }}"
+    search_regex: OpenSSH
+    delay: 120
+  connection: local
+
+
